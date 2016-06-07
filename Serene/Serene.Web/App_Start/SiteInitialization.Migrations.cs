@@ -21,6 +21,9 @@
         {
             var cs = SqlConnections.GetConnectionString(databaseKey);
 
+            if (cs.Dialect.GetType() == typeof(OracleDialect))
+                return;
+
             var cb = cs.ProviderFactory.CreateConnectionStringBuilder();
             cb.ConnectionString = cs.ConnectionString;
 
@@ -108,9 +111,11 @@
             var cs = SqlConnections.GetConnectionString(databaseKey);
             var connection = cs.ConnectionString;
 
+            bool isOracle = cs.Dialect.GetType() == typeof(OracleDialect);
+
             // safety check to ensure that we are not modifying an arbitrary database.
-            // remove these two lines if you want Serene migrations to run on your DB.
-            if (cs.ConnectionString.IndexOf(typeof(SiteInitialization).Namespace +
+            // remove these lines if you want Serene migrations to run on your DB.
+            if (!isOracle && cs.ConnectionString.IndexOf(typeof(SiteInitialization).Namespace +
                     @"_" + databaseKey + "_v1", StringComparison.OrdinalIgnoreCase) < 0)
             {
                 SkippedMigrations = true;
@@ -122,12 +127,14 @@
                 databaseType = "Postgres";
             else if (String.Equals(cs.ProviderName, "MySql.Data.MySqlClient", StringComparison.OrdinalIgnoreCase))
                 databaseType = "MySql";
+            else if (isOracle)
+                databaseType = "OracleManaged";
 
             using (var sw = new StringWriter())
             {
-                var announcer = new TextWriterWithGoAnnouncer(sw)
-                {
-                };
+                Announcer announcer = isOracle ?
+                    new TextWriterAnnouncer(sw) { ShowSql = true } :
+                    new TextWriterWithGoAnnouncer(sw) { ShowSql = true };
 
                 var runner = new RunnerContext(announcer)
                 {
@@ -139,7 +146,17 @@
                     Namespace = "Serene.Migrations." + databaseKey + "DB"
                 };
 
-                new TaskExecutor(runner).Execute();
+                try
+                {
+                    new TaskExecutor(runner).Execute();
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception("Error executing migration:\r\n" +
+                        sw.ToString(), ex);
+                }
+
+                
             }
         }
     }
